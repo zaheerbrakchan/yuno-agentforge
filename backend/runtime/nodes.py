@@ -78,6 +78,12 @@ def _latest_message_has_order(messages) -> bool:
     return bool(_ORDER_ID_RE.search(_latest_user_text(messages)))
 
 
+def _is_greeting_only(text: str) -> bool:
+    return bool(
+        re.match(r"^\s*(hi|hello|hey|thanks|thank you|ok|okay)\s*[!.?]*\s*$", text or "", re.I)
+    )
+
+
 def _should_use_payment_tools(messages) -> bool:
     """Decide if the analyst should call lookup tools on this turn.
 
@@ -86,11 +92,21 @@ def _should_use_payment_tools(messages) -> bool:
     memory and must not re-hit the database every turn.
     """
     latest = _latest_user_text(messages).strip()
-    if not latest:
-        return False
-    if re.match(r"^\s*(hi|hello|hey|thanks|thank you|ok|okay)\s*[!.?]*\s*$", latest, re.I):
+    if not latest or _is_greeting_only(latest):
         return False
     return _latest_message_has_order(messages)
+
+
+def _should_use_agent_tools(tool_names: list, messages) -> bool:
+    """Payment tools need an order ID; general support tools skip pure greetings."""
+    if not tool_names:
+        return False
+    latest = _latest_user_text(messages).strip()
+    if not latest or _is_greeting_only(latest):
+        return False
+    if "lookup_payment" in tool_names:
+        return _should_use_payment_tools(messages)
+    return True
 
 
 async def run_agent_node(state: dict, agent_config: dict, session) -> dict:
@@ -113,9 +129,7 @@ async def run_agent_node(state: dict, agent_config: dict, session) -> dict:
 
     # Tool guard: only bind/call payment tools when the *latest* user message
     # references an order ID. Follow-ups reuse prior findings from memory.
-    use_tools = bool(tools) and (
-        "lookup_payment" not in tool_names or _should_use_payment_tools(convo)
-    )
+    use_tools = _should_use_agent_tools(tool_names, convo)
     force_lookup = use_tools and "lookup_payment" in tool_names and _latest_message_has_order(convo)
 
     if use_tools and force_lookup:

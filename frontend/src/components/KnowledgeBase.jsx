@@ -65,6 +65,15 @@ export default function KnowledgeBase({ onPick }) {
     load().catch(() => setLoading(false))
   }, [load])
 
+  useEffect(() => {
+    if (!modalOpen) return undefined
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [modalOpen])
+
   const copy = async (text) => {
     try {
       await navigator.clipboard.writeText(text)
@@ -169,42 +178,25 @@ export default function KnowledgeBase({ onPick }) {
       </div>
 
       <p className="mb-3 text-xs leading-relaxed text-slate-400">
-        Payment records your agents look up via{' '}
-        <span className="text-slate-300">lookup_payment</span>. For failed orders, add a{' '}
-        <span className="text-slate-300">retry recommendation</span> playbook entry so{' '}
-        <span className="text-slate-300">get_retry_recommendation</span> knows what to tell
-        customers — especially for custom failure reasons.
+        Real payment data your agents look up via{' '}
+        <span className="text-slate-300">lookup_payment</span>.{' '}
+        <span className="text-slate-300">
+          Use the order IDs below as your query reference
+        </span>{' '}
+        — click <span className="text-slate-300">Use</span> to try a question, copy an ID for
+        Telegram, or add your own records (with retry guidance for custom failure reasons).
       </p>
 
-      <div className="mb-3 rounded-md border border-slate-800 bg-slate-950/40 p-3">
-        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
-          <Lightbulb className="h-3.5 w-3.5" /> Try asking
-        </div>
-        <ul className="space-y-1 text-xs text-slate-400">
-          {(data.example_questions || []).slice(0, 4).map((q) => (
-            <li key={q} className="flex items-start gap-2">
-              <span className="text-slate-600">•</span>
-              <button
-                type="button"
-                onClick={() => onPick?.(q)}
-                className="text-left hover:text-indigo-300"
-              >
-                “{q}”
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
-
       {loading ? (
-        <p className="text-xs text-slate-500">Loading records…</p>
+        <p className="mb-3 text-xs text-slate-500">Loading records…</p>
       ) : records.length === 0 ? (
-        <p className="text-xs text-slate-500">No records yet. Add one to start testing.</p>
+        <p className="mb-3 text-xs text-slate-500">No records yet. Add one to start testing.</p>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-            Payment records ({records.length})
+        <div className="mb-3 max-h-56 overflow-y-auto rounded-md border border-indigo-800/30 bg-indigo-950/20 p-2">
+          <div className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-300/90">
+            Payment records — your query reference ({records.length})
           </div>
+          <div className="flex flex-col gap-1.5">
           {records.map((o) => {
             const ok = o.status === 'success'
             return (
@@ -261,23 +253,53 @@ export default function KnowledgeBase({ onPick }) {
               </div>
             )
           })}
+          </div>
         </div>
       )}
 
+      <div className="rounded-md border border-slate-800 bg-slate-950/40 p-3">
+        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+          <Lightbulb className="h-3.5 w-3.5" /> Sample questions
+        </div>
+        <p className="mb-2 text-[10px] text-slate-500">
+          Or try these — swap in any order ID from the list above.
+        </p>
+        <ul className="space-y-1 text-xs text-slate-400">
+          {(data.example_questions || []).slice(0, 4).map((q) => (
+            <li key={q} className="flex items-start gap-2">
+              <span className="text-slate-600">•</span>
+              {onPick ? (
+                <button
+                  type="button"
+                  onClick={() => onPick(q)}
+                  className="text-left hover:text-indigo-300"
+                >
+                  “{q}”
+                </button>
+              ) : (
+                <span>“{q}”</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="card w-full max-w-md">
-            <div className="mb-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6">
+          <div className="card flex max-h-[min(90vh,720px)] w-full max-w-lg flex-col overflow-hidden p-0">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-800 px-5 py-4">
               <h3 className="text-base font-semibold text-white">Add test record</h3>
               <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <p className="mb-4 text-xs text-slate-400">
-              Agents will find this instantly via lookup_payment. Great for testing fraud, custom
-              failures, or your own order IDs.
-            </p>
-            <div className="space-y-3">
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <p className="mb-4 text-xs text-slate-400">
+                Agents will find this instantly via lookup_payment. Great for testing fraud, custom
+                failures, or your own order IDs.
+              </p>
+              <div className="space-y-3">
               <div>
                 <label className="label">Order ID</label>
                 <input
@@ -379,21 +401,25 @@ export default function KnowledgeBase({ onPick }) {
                   onChange={(e) => setForm({ ...form, customer: e.target.value })}
                 />
               </div>
+              </div>
             </div>
-            {formError && (
-              <p className="mt-3 text-xs text-rose-300">{formError}</p>
-            )}
-            <div className="mt-4 flex gap-2">
-              <button onClick={() => setModalOpen(false)} className="btn btn-secondary flex-1">
-                Cancel
-              </button>
-              <button
-                onClick={submit}
-                disabled={saving || !form.order_id.trim()}
-                className="btn btn-primary flex-1"
-              >
-                {saving ? 'Saving…' : 'Save record'}
-              </button>
+
+            <div className="shrink-0 border-t border-slate-800 px-5 py-4">
+              {formError && (
+                <p className="mb-3 text-xs text-rose-300">{formError}</p>
+              )}
+              <div className="flex gap-2">
+                <button onClick={() => setModalOpen(false)} className="btn btn-secondary flex-1">
+                  Cancel
+                </button>
+                <button
+                  onClick={submit}
+                  disabled={saving || !form.order_id.trim()}
+                  className="btn btn-primary flex-1"
+                >
+                  {saving ? 'Saving…' : 'Save record'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

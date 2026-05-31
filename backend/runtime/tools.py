@@ -76,8 +76,60 @@ def list_supported_payment_methods() -> list:
     ]
 
 
+_SUPPORT_TOPICS = {
+    "hours": (
+        "Support is available 24/7 for urgent payment failures. "
+        "Billing and refund questions: Mon–Fri 9am–6pm BRT."
+    ),
+    "refunds": (
+        "Refunds are returned to the original payment method within 5–10 business days. "
+        "Include your order ID when opening a refund request."
+    ),
+    "contact": (
+        "Email support@yuno.com or use in-app chat. "
+        "For failed payments, include your order ID (e.g. ORD-1002) so we can investigate."
+    ),
+    "regions": (
+        "Yuno operates in the US, Brazil, Mexico, and Colombia with local methods "
+        "such as PIX, OXXO, PSE, and Mercado Pago."
+    ),
+}
+
+
+@tool
+def get_support_info(topic: str) -> str:
+    """Return Yuno customer support policy info. Topics: hours, refunds, contact, regions."""
+    raw = (topic or "").strip().lower()
+    aliases = {
+        "hour": "hours",
+        "time": "hours",
+        "schedule": "hours",
+        "refund": "refunds",
+        "return": "refunds",
+        "money back": "refunds",
+        "email": "contact",
+        "phone": "contact",
+        "help": "contact",
+        "region": "regions",
+        "country": "regions",
+        "countries": "regions",
+        "market": "regions",
+    }
+    key = aliases.get(raw, raw)
+    if key not in _SUPPORT_TOPICS:
+        for k in _SUPPORT_TOPICS:
+            if k in raw or raw in k:
+                key = k
+                break
+    return _SUPPORT_TOPICS.get(
+        key,
+        "Available topics: hours, refunds, contact, regions. Ask about any of these.",
+    )
+
+
 AVAILABLE_TOOLS = {
     "lookup_payment": lookup_payment,
     "get_retry_recommendation": get_retry_recommendation,
     "list_supported_payment_methods": list_supported_payment_methods,
+    "get_support_info": get_support_info,
 }

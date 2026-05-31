@@ -1,40 +1,67 @@
 import { useEffect, useRef } from 'react'
-import { Bot, User } from 'lucide-react'
+import { Bot, User, ArrowRightLeft, Loader2 } from 'lucide-react'
 
-/** Customer-facing chat bubbles — one assistant reply per user turn. */
+const HANDOFF_AGENTS = new Set(['Support Router', 'Orchestrator'])
+
+/** Customer-facing chat bubbles — supports handoff turns (two assistant replies). */
 export function chatMessages(messages = []) {
   const visible = []
-  let pendingAssistant = null
+  let i = 0
 
-  for (const m of messages) {
+  while (i < messages.length) {
+    const m = messages[i]
     if (m.message_type === 'human_input' || m.from_agent === 'telegram') {
-      if (pendingAssistant) {
-        visible.push(pendingAssistant)
-        pendingAssistant = null
-      }
       visible.push({ ...m, role: 'user' })
+      i += 1
+
+      const turn = []
+      while (i < messages.length && messages[i].message_type !== 'human_input') {
+        turn.push(messages[i])
+        i += 1
+      }
+
+      const hasHandoff = turn.some((t) => t.message_type === 'inter_agent')
+      if (hasHandoff) {
+        const handoffAgent = turn.find(
+          (t) => t.message_type === 'agent_response' && HANDOFF_AGENTS.has(t.from_agent),
+        )
+        const finalAgent =
+          turn.find((t) => t.message_type === 'agent_response' && t.from_agent === 'Response Writer') ||
+          turn.find((t) => t.message_type === 'agent_response' && t.from_agent === 'General Support Agent') ||
+          turn.filter((t) => t.message_type === 'agent_response').at(-1)
+
+        if (handoffAgent) {
+          visible.push({ ...handoffAgent, role: 'assistant', variant: 'handoff' })
+        }
+        if (finalAgent && finalAgent.id !== handoffAgent?.id) {
+          visible.push({ ...finalAgent, role: 'assistant', variant: 'final' })
+        }
+      } else {
+        const finalAgent =
+          turn.find((t) => t.message_type === 'agent_response' && t.from_agent === 'Response Writer') ||
+          turn.find((t) => t.message_type === 'agent_response' && t.from_agent === 'General Support Agent') ||
+          turn.filter((t) => t.message_type === 'agent_response').at(-1)
+        if (finalAgent) {
+          visible.push({ ...finalAgent, role: 'assistant' })
+        }
+      }
       continue
     }
-    if (m.message_type !== 'agent_response') continue
-    if (m.from_agent === 'Response Writer') {
-      pendingAssistant = { ...m, role: 'assistant' }
-    } else if (!pendingAssistant || pendingAssistant.from_agent !== 'Response Writer') {
-      pendingAssistant = { ...m, role: 'assistant' }
-    }
+    i += 1
   }
-  if (pendingAssistant) visible.push(pendingAssistant)
+
   return visible
 }
 
-export default function MessageHistory({ messages = [], mode = 'full' }) {
+export default function MessageHistory({ messages = [], mode = 'full', running = false, runStatus = '' }) {
   const bottomRef = useRef(null)
   const rows = mode === 'chat' ? chatMessages(messages) : messages
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [rows.length])
+  }, [rows.length, running])
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && !running) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm text-slate-500">
         <Bot className="h-8 w-8 text-slate-600" />
@@ -49,22 +76,35 @@ export default function MessageHistory({ messages = [], mode = 'full' }) {
       <div className="space-y-4 px-4 py-3">
         {rows.map((m) => {
           const isUser = m.role === 'user'
+          const isHandoff = m.variant === 'handoff'
           return (
             <div key={m.id} className={`flex gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
               {!isUser && (
-                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-500/20">
-                  <Bot className="h-3.5 w-3.5 text-indigo-300" />
+                <div
+                  className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                    isHandoff ? 'bg-sky-500/20' : 'bg-indigo-500/20'
+                  }`}
+                >
+                  {isHandoff ? (
+                    <ArrowRightLeft className="h-3.5 w-3.5 text-sky-300" />
+                  ) : (
+                    <Bot className="h-3.5 w-3.5 text-indigo-300" />
+                  )}
                 </div>
               )}
               <div className={`max-w-[78%] ${isUser ? 'order-first' : ''}`}>
                 {!isUser && (
-                  <div className="mb-1 text-[11px] text-slate-500">{m.from_agent || 'Assistant'}</div>
+                  <div className={`mb-1 text-[11px] ${isHandoff ? 'text-sky-400' : 'text-slate-500'}`}>
+                    {isHandoff ? `${m.from_agent} · redirecting` : m.from_agent || 'Assistant'}
+                  </div>
                 )}
                 <div
                   className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                     isUser
                       ? 'rounded-br-md bg-indigo-600 text-white'
-                      : 'rounded-bl-md bg-slate-800 text-slate-100'
+                      : isHandoff
+                        ? 'rounded-bl-md border border-sky-700/50 bg-sky-950/40 text-sky-50'
+                        : 'rounded-bl-md bg-slate-800 text-slate-100'
                   }`}
                 >
                   {m.content}
@@ -83,6 +123,18 @@ export default function MessageHistory({ messages = [], mode = 'full' }) {
             </div>
           )
         })}
+
+        {running && (
+          <div className="flex justify-start gap-2">
+            <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-500/20">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-300" />
+            </div>
+            <div className="max-w-[78%] rounded-2xl rounded-bl-md border border-sky-800/40 bg-sky-950/30 px-3.5 py-2.5 text-sm text-sky-200">
+              {runStatus || 'Agents are working…'}
+            </div>
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
     )

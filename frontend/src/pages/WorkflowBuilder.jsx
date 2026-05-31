@@ -12,7 +12,7 @@ import ReactFlow, {
   useReactFlow,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Save, Trash2, LayoutTemplate, Bot, Check } from 'lucide-react'
+import { Save, Trash2, LayoutTemplate, Bot, Check, X, HelpCircle } from 'lucide-react'
 import { agentsApi, workflowsApi } from '../api/client.js'
 
 const roleColors = {
@@ -39,12 +39,60 @@ function nodeStyle(role) {
 let idCounter = 1
 const nextId = () => `node_${idCounter++}_${Date.now()}`
 
+const TEMPLATE_ROLE_KEYS = {
+  orchestrator: (agents) =>
+    agents.find((a) => a.name === 'Orchestrator') || agents.find((a) => a.role === 'orchestrator'),
+  analyst: (agents) =>
+    agents.find((a) => a.name === 'Payment Analyst') || agents.find((a) => a.role === 'analyst'),
+  responder: (agents) =>
+    agents.find((a) => a.name === 'Response Writer') || agents.find((a) => a.role === 'responder'),
+  router: (agents) => agents.find((a) => a.name === 'Support Router'),
+  specialist: (agents) => agents.find((a) => a.name === 'General Support Agent'),
+}
+
+function resolveTemplateAgent(agentKey, agents) {
+  if (agents.some((a) => a.id === agentKey)) {
+    return agents.find((a) => a.id === agentKey)
+  }
+  const resolver = TEMPLATE_ROLE_KEYS[agentKey]
+  return resolver ? resolver(agents) : null
+}
+
+function buildGraphFromTemplate(tpl, agents) {
+  const tplNodes = tpl.graph_json.nodes.map((n) => {
+    const agent = resolveTemplateAgent(n.agent_id, agents)
+    const role = agent?.role || n.agent_id
+    const label = agent?.name || n.agent_id
+    return {
+      id: n.id,
+      position: n.position || { x: 0, y: 0 },
+      data: {
+        label,
+        role,
+        agent_id: agent?.id || n.agent_id,
+        name: label,
+      },
+      style: nodeStyle(role),
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+    }
+  })
+  const tplEdges = tpl.graph_json.edges.map((e, i) => ({
+    id: `e_${i}`,
+    source: e.source,
+    target: e.target,
+    animated: true,
+  }))
+  return { nodes: tplNodes, edges: tplEdges }
+}
+
 function Builder() {
   const wrapperRef = useRef(null)
   const { screenToFlowPosition } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [agents, setAgents] = useState([])
+  const [savedWorkflows, setSavedWorkflows] = useState([])
   const [templates, setTemplates] = useState([])
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -52,18 +100,26 @@ function Builder() {
   const [savedId, setSavedId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
+  const [templateModalOpen, setTemplateModalOpen] = useState(false)
+  const [pendingTemplate, setPendingTemplate] = useState(null)
+  const [templateMode, setTemplateMode] = useState('create')
+  const [newWorkflowName, setNewWorkflowName] = useState('')
+  const [editWorkflowId, setEditWorkflowId] = useState('')
+  const [templateError, setTemplateError] = useState('')
 
   const [searchParams] = useSearchParams()
 
   useEffect(() => {
     const editId = searchParams.get('id')
     const init = async () => {
-      const [agentsRes, templatesRes] = await Promise.all([
+      const [agentsRes, templatesRes, workflowsRes] = await Promise.all([
         agentsApi.list().catch(() => ({ data: [] })),
         workflowsApi.getTemplates().catch(() => ({ data: [] })),
+        workflowsApi.list().catch(() => ({ data: [] })),
       ])
       setAgents(agentsRes.data)
       setTemplates(templatesRes.data)
+      setSavedWorkflows(workflowsRes.data || [])
 
       if (editId) {
         const list = await workflowsApi.list().catch(() => ({ data: [] }))
@@ -132,32 +188,84 @@ function Builder() {
     [screenToFlowPosition, setNodes]
   )
 
-  const loadTemplate = (templateId) => {
+  useEffect(() => {
+    if (!templateModalOpen) return undefined
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [templateModalOpen])
+
+  const openTemplateModal = (templateId) => {
     const tpl = templates.find((t) => t.id === templateId)
     if (!tpl) return
-    const tplNodes = tpl.graph_json.nodes.map((n) => {
-      const role = n.agent_id
-      return {
-        id: n.id,
-        position: n.position || { x: 0, y: 0 },
-        data: { label: n.agent_id, role, agent_id: n.agent_id },
-        style: nodeStyle(role),
-        sourcePosition: Position.Right,
-        targetPosition: Position.Left,
-      }
-    })
-    const tplEdges = tpl.graph_json.edges.map((e, i) => ({
-      id: `e_${i}`,
-      source: e.source,
-      target: e.target,
-      animated: true,
-    }))
+    const match = savedWorkflows.find((w) => w.name === tpl.name)
+    setPendingTemplate(tpl)
+    setTemplateMode(match ? 'edit' : 'create')
+    setNewWorkflowName(`${tpl.name} (copy)`)
+    setEditWorkflowId(match?.id || savedWorkflows[0]?.id || '')
+    setTemplateError('')
+    setTemplateModalOpen(true)
+  }
+
+  const applyTemplate = (tpl, { mode, workflowId, workflowName, workflowDescription }) => {
+    const { nodes: tplNodes, edges: tplEdges } = buildGraphFromTemplate(tpl, agents)
     setNodes(tplNodes)
     setEdges(tplEdges)
-    setName(tpl.name)
-    setDescription(tpl.description)
-    setSavedId(null)
-    setStatus(`Loaded template: ${tpl.name}`)
+    setName(workflowName)
+    setDescription(workflowDescription)
+    if (mode === 'edit') {
+      setSavedId(workflowId)
+      setStatus(`Editing "${workflowName}" — template applied (Save to update)`)
+    } else {
+      setSavedId(null)
+      setStatus(`New workflow "${workflowName}" — add agents, then Save`)
+    }
+  }
+
+  const confirmTemplateLoad = () => {
+    if (!pendingTemplate) return
+    setTemplateError('')
+
+    const unresolved = (pendingTemplate.graph_json?.nodes || []).filter((n) => {
+      const agent = resolveTemplateAgent(n.agent_id, agents)
+      return !agent?.id
+    })
+    if (unresolved.length) {
+      setTemplateError(
+        'Missing agents for this template. Restart the backend, then refresh — Support Router and General Support Agent are created on startup.',
+      )
+      return
+    }
+
+    if (templateMode === 'create') {
+      const workflowName = newWorkflowName.trim()
+      if (!workflowName) {
+        setTemplateError('Enter a name for the new workflow.')
+        return
+      }
+      applyTemplate(pendingTemplate, {
+        mode: 'create',
+        workflowName,
+        workflowDescription: pendingTemplate.description,
+      })
+    } else {
+      const wf = savedWorkflows.find((w) => w.id === editWorkflowId)
+      if (!wf) {
+        setTemplateError('Select a workflow to update.')
+        return
+      }
+      applyTemplate(pendingTemplate, {
+        mode: 'edit',
+        workflowId: wf.id,
+        workflowName: wf.name,
+        workflowDescription: wf.description || pendingTemplate.description,
+      })
+    }
+
+    setTemplateModalOpen(false)
+    setPendingTemplate(null)
   }
 
   const clearCanvas = () => {
@@ -241,13 +349,10 @@ function Builder() {
 
       <div className="flex flex-1 flex-col">
         <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900/40 px-4 py-2">
-          <button onClick={save} className="btn btn-primary px-3 py-1.5 text-sm">
-            <Save className="h-4 w-4" /> Save workflow
-          </button>
           <div className="relative">
             <select
               onChange={(e) => {
-                if (e.target.value) loadTemplate(e.target.value)
+                if (e.target.value) openTemplateModal(e.target.value)
                 e.target.value = ''
               }}
               defaultValue=""
@@ -331,6 +436,119 @@ function Builder() {
           </div>
         </div>
       </div>
+
+      {templateModalOpen && pendingTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="card w-full max-w-md p-0 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="h-5 w-5 text-indigo-400" />
+                <h3 className="text-base font-semibold text-white">Use template</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTemplateModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <p className="mb-4 text-xs text-slate-400">
+                Template: <span className="text-slate-200">{pendingTemplate.name}</span> —{' '}
+                {pendingTemplate.description}
+              </p>
+
+              <div className="space-y-2">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3 hover:border-slate-700">
+                  <input
+                    type="radio"
+                    name="templateMode"
+                    checked={templateMode === 'create'}
+                    onChange={() => setTemplateMode('create')}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-white">Create new workflow</div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Start from this template with a new name. Drag more agents onto the canvas,
+                      then Save.
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 hover:border-slate-700 ${
+                    savedWorkflows.length === 0
+                      ? 'cursor-not-allowed border-slate-800/50 opacity-50'
+                      : 'border-slate-800 bg-slate-950/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="templateMode"
+                    checked={templateMode === 'edit'}
+                    onChange={() => setTemplateMode('edit')}
+                    disabled={savedWorkflows.length === 0}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-white">Update existing workflow</div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Apply template to a saved workflow and overwrite its graph when you Save.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              {templateMode === 'create' ? (
+                <div className="mt-4">
+                  <label className="label">New workflow name</label>
+                  <input
+                    className="input"
+                    value={newWorkflowName}
+                    onChange={(e) => setNewWorkflowName(e.target.value)}
+                    placeholder="e.g. My payment support flow"
+                  />
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <label className="label">Workflow to update</label>
+                  <select
+                    className="input"
+                    value={editWorkflowId}
+                    onChange={(e) => setEditWorkflowId(e.target.value)}
+                  >
+                    {savedWorkflows.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {templateError && (
+                <p className="mt-3 text-xs text-rose-300">{templateError}</p>
+              )}
+            </div>
+
+            <div className="flex gap-2 border-t border-slate-800 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setTemplateModalOpen(false)}
+                className="btn btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button type="button" onClick={confirmTemplateLoad} className="btn btn-primary flex-1">
+                Load template
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

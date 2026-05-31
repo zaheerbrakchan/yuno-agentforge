@@ -44,7 +44,11 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # separate even if two bots share a chat id space.
     session_id = f"{bot_id}:{update.effective_chat.id}"
 
-    await update.message.reply_text("Working on it… one moment.")
+    # Show typing in Telegram (no extra "hold on" bubble — Monitor doesn't send one either).
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id,
+        action="typing",
+    )
     try:
         async with AsyncSessionLocal() as session:
             workflow_id = await _resolve_workflow_id(bot_id, session)

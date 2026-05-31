@@ -73,6 +73,7 @@ async def test_get_available_tools():
     tools = response.json()
     assert "lookup_payment" in tools
     assert "get_retry_recommendation" in tools
+    assert "get_support_info" in tools
 
 
 @pytest.mark.asyncio
@@ -97,3 +98,11 @@ async def test_custom_payment_saves_playbook():
     playbook = {p["reason"]: p for p in listing.json()["playbook"]}
     assert "billing_address_mismatch" in playbook
     assert playbook["billing_address_mismatch"]["is_builtin"] is False
+
+
+def test_handoff_intent_classification():
+    from backend.runtime.handoff import classify_message_intent
+
+    assert classify_message_intent("Why did my payment fail for order ORD-1002?") == "payment_investigation"
+    assert classify_message_intent("What payment methods do you accept?") == "general_support"
+    assert classify_message_intent("Hi there") == "greeting"

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Play, Square, Bot, Wrench, CheckCircle2, MessageSquare } from 'lucide-react'
+import { Play, Square, Bot, Wrench, CheckCircle2, MessageSquare, ArrowRightLeft } from 'lucide-react'
 
 const pill = {
   agent_start: { label: 'Agent started', cls: 'bg-blue-500/20 text-blue-300', Icon: Bot },
   tool_call: { label: 'Tool called', cls: 'bg-amber-500/20 text-amber-300', Icon: Wrench },
   tool_result: { label: 'Tool result', cls: 'bg-emerald-500/20 text-emerald-300', Icon: CheckCircle2 },
   agent_response: { label: 'Response', cls: 'bg-violet-500/20 text-violet-300', Icon: MessageSquare },
+  handoff: { label: 'Handoff', cls: 'bg-sky-500/20 text-sky-300', Icon: ArrowRightLeft },
 }
 
 function LogRow({ event }) {
@@ -45,6 +46,12 @@ function LogRow({ event }) {
           <div className="mt-1 text-[11px] text-slate-500">
             {event.tokens} tokens · ${Number(event.cost || 0).toFixed(6)}
           </div>
+        </div>
+      )}
+      {event.type === 'handoff' && (
+        <div className="rounded border border-sky-800/40 bg-sky-950/30 p-2 text-xs text-sky-100">
+          <div className="mb-1 font-medium text-sky-300">→ {event.target_workflow}</div>
+          {event.content}
         </div>
       )}
     </div>

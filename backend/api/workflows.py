@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from ..db.database import get_session
-from ..db.models import Workflow, Message
+from ..db.models import Workflow, Message, WorkflowRun
 from ..runtime.executor import execute_workflow
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -19,6 +19,8 @@ class WorkflowCreate(BaseModel):
 class RunWorkflowRequest(BaseModel):
     input_message: str
     session_id: Optional[str] = None
+    staged_handoff: bool = False
+    skip_handoff: bool = False
 
 
 @router.get("/")
@@ -34,6 +36,59 @@ async def create_workflow(data: WorkflowCreate, session: AsyncSession = Depends(
     await session.commit()
     await session.refresh(workflow)
     return workflow
+
+
+@router.delete("/runs/{run_id}")
+async def delete_workflow_run(run_id: str, session: AsyncSession = Depends(get_session)):
+    """Remove a single workflow run from history (dashboard recent runs)."""
+    run = await session.get(WorkflowRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    await session.delete(run)
+    await session.commit()
+    return {"ok": True}
+
+
+async def _delete_session_data(session: AsyncSession, session_id: str) -> int:
+    """Remove every message and run record for a session (may span workflows after handoff)."""
+    messages = (
+        await session.exec(select(Message).where(Message.session_id == session_id))
+    ).all()
+    if not messages:
+        raise HTTPException(404, "Session not found")
+
+    for msg in messages:
+        await session.delete(msg)
+
+    runs = (
+        await session.exec(select(WorkflowRun).where(WorkflowRun.session_id == session_id))
+    ).all()
+    for run in runs:
+        await session.delete(run)
+
+    await session.commit()
+    return len(messages)
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session_by_id(session_id: str, session: AsyncSession = Depends(get_session)):
+    """Delete a conversation and all related messages/runs across workflows."""
+    deleted = await _delete_session_data(session, session_id)
+    return {"ok": True, "deleted_messages": deleted}
+
+
+@router.delete("/{workflow_id}/sessions/{session_id}")
+async def delete_session(
+    workflow_id: str,
+    session_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete all messages (and run records) for a conversation session."""
+    workflow = await session.get(Workflow, workflow_id)
+    if not workflow:
+        raise HTTPException(404, "Workflow not found")
+    deleted = await _delete_session_data(session, session_id)
+    return {"ok": True, "deleted_messages": deleted}
 
 
 @router.delete("/{workflow_id}")
@@ -82,7 +137,7 @@ async def get_templates():
         {
             "id": "support-router",
             "name": "Customer support router",
-            "description": "2-agent workflow: Router Agent → Specialist Agent",
+            "description": "General support (no order lookup): Support Router → General Support Agent — payment methods, hours, refunds, regions",
             "graph_json": {
                 "nodes": [
                     {"id": "router", "agent_id": "router", "position": {"x": 100, "y": 200}},
@@ -109,15 +164,43 @@ async def run_workflow(
             session=session,
             session_id=req.session_id,
             from_agent="human",
+            allow_handoff=not req.skip_handoff,
+            staged_handoff=req.staged_handoff,
         )
     except Exception as e:
         raise HTTPException(500, str(e))
 
 
+@router.get("/sessions/list")
+async def list_sessions(session: AsyncSession = Depends(get_session)):
+    """All conversation sessions across workflows (for Monitor sidebar)."""
+    rows = (await session.exec(select(Message).order_by(Message.created_at))).all()
+    map: dict = {}
+    for m in rows:
+        sid = m.session_id
+        if sid not in map:
+            map[sid] = {
+                "session_id": sid,
+                "last": m.created_at,
+                "count": 0,
+                "preview": "",
+                "workflow_id": m.workflow_id,
+            }
+        map[sid]["count"] += 1
+        if m.created_at > map[sid]["last"]:
+            map[sid]["last"] = m.created_at
+        if m.message_type == "human_input" and not map[sid]["preview"]:
+            map[sid]["preview"] = m.content[:42]
+            map[sid]["workflow_id"] = m.workflow_id
+    return sorted(map.values(), key=lambda x: x["last"] or "", reverse=True)
+
+
 @router.get("/{workflow_id}/messages")
 async def get_messages(workflow_id: str, session_id: Optional[str] = None, session: AsyncSession = Depends(get_session)):
-    query = select(Message).where(Message.workflow_id == workflow_id)
     if session_id:
-        query = query.where(Message.session_id == session_id)
+        # A session may span workflows after an automatic handoff — return the full thread.
+        query = select(Message).where(Message.session_id == session_id)
+    else:
+        query = select(Message).where(Message.workflow_id == workflow_id)
     result = await session.exec(query.order_by(Message.created_at))
     return result.all()

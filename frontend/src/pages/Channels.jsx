@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Loader2, CheckCircle2, Trash2, Plus, MessageCircle, Info, Save } from 'lucide-react'
+import {
+  Loader2,
+  CheckCircle2,
+  Trash2,
+  Plus,
+  MessageCircle,
+  Info,
+  Save,
+  HelpCircle,
+  X,
+} from 'lucide-react'
 import { channelsApi, workflowsApi } from '../api/client.js'
 import KnowledgeBase from '../components/KnowledgeBase.jsx'
 
@@ -24,40 +34,90 @@ function HowItWorks() {
           that one.
         </li>
         <li>To try it: connect your bot, then open it in Telegram and send it a message.</li>
+        <li>
+          Use the <span className="font-semibold text-white">payment records</span> in the knowledge
+          base above as your reference — pick an order ID like{' '}
+          <span className="font-mono text-slate-200">ORD-1002</span> when you test a query.
+        </li>
       </ul>
     </div>
   )
 }
 
-function Guidelines() {
+function TelegramConnectGuide() {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-white">
-        <Info className="h-4 w-4 text-sky-400" />
-        Connect your own Telegram bot
-      </div>
-      <ol className="list-decimal space-y-1.5 pl-5 text-xs text-slate-400">
+    <>
+      <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-300">
         <li>
-          Open Telegram and message <span className="text-slate-200">@BotFather</span>.
+          Open Telegram and message <span className="text-white">@BotFather</span>.
         </li>
         <li>
-          Send <span className="text-slate-200">/newbot</span> and follow the prompts (give it a
-          name and a username ending in <span className="text-slate-200">bot</span>).
+          Send <span className="text-white">/newbot</span> and follow the prompts (give it a name and
+          a username ending in <span className="text-white">bot</span>).
         </li>
         <li>
-          BotFather replies with a <span className="text-slate-200">token</span> like{' '}
-          <span className="text-slate-200">123456:ABC-DEF...</span>. Copy it.
+          BotFather replies with a <span className="text-white">token</span> like{' '}
+          <span className="font-mono text-slate-200">123456:ABC-DEF...</span>. Copy it.
         </li>
-        <li>Paste the token on the right, choose which workflow should answer, and click Connect.</li>
+        <li>
+          Paste the token in the field below, choose which workflow should answer, and click{' '}
+          <span className="text-white">Connect bot</span>.
+        </li>
         <li>
           Open your bot in Telegram, send it a message, and your agent workflow will reply live.
         </li>
+        <li>
+          Use an order ID from the <span className="text-white">Knowledge base</span> panel (e.g.
+          “Why did my payment fail for order ORD-1004?”) — those records are the same data agents
+          look up.
+        </li>
       </ol>
-      <p className="mt-2 text-xs text-slate-500">
-        In Telegram, send <span className="text-slate-300">/orders</span> to list knowledge base
-        records. Add your own test data in the Knowledge base panel. Tokens are stored only to run
-        your bot and are never shown back in full.
+      <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-400">
+        In Telegram, send <span className="text-slate-200">/orders</span> to list the same records.
+        Click <span className="text-slate-200">Use</span> or copy an order ID from the knowledge
+        base whenever you need a query idea. Tokens are stored only to run your bot and are never
+        shown back in full.
       </p>
+    </>
+  )
+}
+
+function TelegramConnectGuideModal({ open, onClose }) {
+  useEffect(() => {
+    if (!open) return undefined
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [open])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6">
+      <div className="card flex max-h-[min(90vh,640px)] w-full max-w-lg flex-col overflow-hidden p-0">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-800 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <HelpCircle className="h-5 w-5 text-sky-400" />
+            <h3 className="text-base font-semibold text-white">How to connect your Telegram bot</h3>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white" aria-label="Close">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <p className="mb-4 text-xs text-slate-400">
+            Follow these steps to create a bot with BotFather and link it to your workflow.
+          </p>
+          <TelegramConnectGuide />
+        </div>
+        <div className="shrink-0 border-t border-slate-800 px-5 py-4">
+          <button onClick={onClose} className="btn btn-primary w-full">
+            Got it
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -174,6 +234,7 @@ export default function Channels() {
   const [newWf, setNewWf] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [connectError, setConnectError] = useState(null)
+  const [guideOpen, setGuideOpen] = useState(false)
 
   const load = async () => {
     const [ch, wf] = await Promise.all([channelsApi.list(), workflowsApi.list()])
@@ -247,15 +308,28 @@ export default function Channels() {
           <div className="grid grid-cols-1 gap-0 lg:grid-cols-5">
             {/* Left — setup guide & test data */}
             <div className="flex flex-col gap-4 border-b border-slate-800 p-5 lg:col-span-2 lg:border-b-0 lg:border-r">
-              <HowItWorks />
-              <Guidelines />
               <KnowledgeBase />
+              <HowItWorks />
             </div>
 
             {/* Right — connect & manage bots */}
             <div className="flex flex-col gap-5 p-5 lg:col-span-3">
               <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
-                <div className="mb-3 text-sm font-semibold text-white">Connect a bot</div>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-white">Connect a bot</div>
+                  <button
+                    type="button"
+                    onClick={() => setGuideOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-800/50 bg-sky-900/25 px-2.5 py-1 text-xs font-medium text-sky-300 transition-colors hover:border-sky-700 hover:bg-sky-900/40 hover:text-sky-200"
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                    See details — how to connect
+                  </button>
+                </div>
+                <p className="mb-3 text-xs text-slate-500">
+                  Paste your BotFather token below. Need help? Click{' '}
+                  <span className="text-slate-300">See details</span> for step-by-step instructions.
+                </p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="sm:col-span-2">
                     <label className="label">Bot token (from @BotFather)</label>
@@ -326,6 +400,8 @@ export default function Channels() {
           </div>
         </div>
       )}
+
+      <TelegramConnectGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
     </div>
   )
 }

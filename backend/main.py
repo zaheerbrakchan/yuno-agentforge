@@ -74,7 +74,45 @@ DEFAULT_AGENTS = [
 ]
 
 
+SUPPORT_AGENTS = [
+    {
+        "name": "Support Router",
+        "role": "orchestrator",
+        "system_prompt": (
+            "You are the router for Yuno's general customer support line.\n"
+            "Read the user's message and write a brief internal handoff for the support specialist.\n"
+            "- greeting: welcome them and note you handle general questions (payment methods, refunds policy, hours, regions).\n"
+            "- payment_methods: user asks which cards/wallets/methods are accepted.\n"
+            "- policy_faq: refunds, support hours, how to contact us, countries/regions served.\n"
+            "- order_investigation: user asks about a specific failed order or gives an order ID — "
+            "note this needs the payment investigation team (the platform will auto-transfer).\n"
+            "Do not address the customer directly. Be concise."
+        ),
+        "model": "claude-sonnet-4-20250514",
+        "tools": [],
+        "memory_enabled": True,
+        "max_tokens": 400,
+    },
+    {
+        "name": "General Support Agent",
+        "role": "custom",
+        "system_prompt": (
+            "You are the customer-facing general support agent for Yuno payments.\n"
+            "Tools: list_supported_payment_methods, get_support_info (topics: hours, refunds, contact, regions).\n"
+            "Use tools when the user asks about accepted payment methods or support policies.\n"
+            "You handle general support only — not order failure investigations.\n"
+            "Write a friendly, helpful reply in 1–3 sentences. Never mention internal agents or tools."
+        ),
+        "model": "claude-sonnet-4-20250514",
+        "tools": ["list_supported_payment_methods", "get_support_info"],
+        "memory_enabled": True,
+        "max_tokens": 600,
+    },
+]
+
+
 DEFAULT_WORKFLOW_NAME = "Payment failure investigator"
+SUPPORT_WORKFLOW_NAME = "Customer support router"
 
 
 # Sample orders seeded into the payments table so testers have real order IDs to
@@ -119,6 +157,22 @@ async def seed_playbook():
                 is_builtin=True,
             ))
         await session.commit()
+
+
+async def seed_support_agents():
+    """Add general-support agents (used by the Customer support router template)."""
+    from sqlmodel import select
+    from .db.models import Agent
+
+    async with AsyncSessionLocal() as session:
+        existing_names = {a.name for a in (await session.exec(select(Agent))).all()}
+        added = False
+        for cfg in SUPPORT_AGENTS:
+            if cfg["name"] not in existing_names:
+                session.add(Agent(**cfg))
+                added = True
+        if added:
+            await session.commit()
 
 
 async def seed_default_agents():
@@ -230,12 +284,51 @@ async def seed_default_workflow():
         await session.commit()
 
 
+async def seed_support_workflow():
+    """Ensure the Customer support router workflow exists with Support Router → General Support Agent."""
+    from sqlmodel import select
+    from .db.models import Agent, Workflow
+
+    async with AsyncSessionLocal() as session:
+        for wf in (await session.exec(select(Workflow))).all():
+            if wf.name == SUPPORT_WORKFLOW_NAME and (wf.graph_json or {}).get("nodes"):
+                return
+
+        agents = (await session.exec(select(Agent))).all()
+
+        def find(name):
+            return next((a for a in agents if a.name == name), None)
+
+        router = find("Support Router")
+        specialist = find("General Support Agent")
+        if not (router and specialist):
+            return
+
+        graph_json = {
+            "nodes": [
+                {"id": "n_router", "agent_id": router.id, "role": "orchestrator", "position": {"x": 80, "y": 160}},
+                {"id": "n_specialist", "agent_id": specialist.id, "role": "custom", "position": {"x": 400, "y": 160}},
+            ],
+            "edges": [
+                {"source": "n_router", "target": "n_specialist"},
+            ],
+        }
+        session.add(Workflow(
+            name=SUPPORT_WORKFLOW_NAME,
+            description="General support: payment methods, hours, refunds, regions — no order lookup.",
+            graph_json=graph_json,
+        ))
+        await session.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     await seed_default_agents()
+    await seed_support_agents()
     await upgrade_default_agent_prompts()
     await seed_default_workflow()
+    await seed_support_workflow()
     await seed_playbook()
     await seed_payments()
 
