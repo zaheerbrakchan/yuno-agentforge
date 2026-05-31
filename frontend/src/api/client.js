@@ -4,6 +4,32 @@ const BASE_URL = import.meta.env.VITE_API_URL || ''
 
 const api = axios.create({ baseURL: `${BASE_URL}/api` })
 
+function isJsonResponse(response) {
+  const ct = response.headers?.['content-type'] || ''
+  return ct.includes('application/json') || typeof response.data !== 'string'
+}
+
+api.interceptors.response.use(
+  (response) => {
+    if (!isJsonResponse(response)) {
+      const err = new Error(
+        BASE_URL
+          ? 'Backend returned an invalid response.'
+          : 'VITE_API_URL is not set — redeploy the frontend with the backend URL.',
+      )
+      err.response = response
+      return Promise.reject(err)
+    }
+    return response
+  },
+  (error) => Promise.reject(error),
+)
+
+/** Normalize list endpoints so a bad deploy cannot crash React with `.map`. */
+export function asArray(data) {
+  return Array.isArray(data) ? data : []
+}
+
 export const agentsApi = {
   list: () => api.get('/agents/'),
   create: (data) => api.post('/agents/', data),

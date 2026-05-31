@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Send, Loader2, RefreshCw, Plus, ChevronDown, ChevronUp, Database, Trash2, ArrowRightLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { workflowsApi } from '../api/client.js'
+import { workflowsApi, asArray } from '../api/client.js'
 import LogStream from '../components/LogStream.jsx'
 import MessageHistory from '../components/MessageHistory.jsx'
 import KnowledgeBase from '../components/KnowledgeBase.jsx'
@@ -74,7 +74,9 @@ export default function Monitor() {
         }
       }
     }
-    init().catch(() => {})
+    init().catch((e) => {
+      setError(e?.message || 'Could not load workflows. Check VITE_API_URL on the frontend service.')
+    })
     return () => {
       if (handoffTimerRef.current) clearTimeout(handoffTimerRef.current)
     }

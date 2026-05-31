@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Plus, Loader2 } from 'lucide-react'
-import { agentsApi } from '../api/client.js'
+import { agentsApi, asArray } from '../api/client.js'
 import AgentCard from '../components/AgentCard.jsx'
 import AgentForm from '../components/AgentForm.jsx'
 
@@ -63,6 +63,12 @@ export default function Agents() {
           New Agent
         </button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-rose-800/60 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center gap-2 text-slate-400">

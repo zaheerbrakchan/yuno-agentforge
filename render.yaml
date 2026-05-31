@@ -37,5 +37,9 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      # Baked into the Vite build — must point at the backend, not the static site.
       - key: VITE_API_URL
-        sync: false
+        fromService:
+          type: web
+          name: yuno-agentforge-backend
+          envVarKey: RENDER_EXTERNAL_URL

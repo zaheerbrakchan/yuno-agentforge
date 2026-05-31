@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Workflow as WorkflowIcon, Pencil, Trash2, Play, Loader2, Plus } from 'lucide-react'
-import { workflowsApi } from '../api/client.js'
+import { workflowsApi, asArray } from '../api/client.js'
 
 const roleColors = {
   orchestrator: '#8b5cf6',
@@ -16,12 +16,17 @@ export default function Workflows() {
   const navigate = useNavigate()
   const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   const load = async () => {
     setLoading(true)
+    setError('')
     try {
       const res = await workflowsApi.list()
-      setWorkflows(res.data)
+      setWorkflows(asArray(res.data))
+    } catch (e) {
+      setWorkflows([])
+      setError(e?.message || 'Could not load workflows. Check VITE_API_URL on the frontend service.')
     } finally {
       setLoading(false)
     }
@@ -54,6 +59,12 @@ export default function Workflows() {
           New Workflow
         </button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-rose-800/60 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center gap-2 text-slate-400">
