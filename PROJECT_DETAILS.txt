@@ -1,0 +1,673 @@
+================================================================================
+                    YUNO AGENTFORGE — COMPLETE PROJECT DETAILS
+================================================================================
+
+Project Name    : Yuno AgentForge
+Purpose         : AI Agent Orchestration Platform (Yuno Senior AI Engineer hiring challenge)
+Author          : Zaheer Abass
+GitHub          : https://github.com/zaheerbrakchan/yuno-agentforge
+Live Frontend   : https://yuno-agentforge-frontend.onrender.com
+Live Backend    : https://yuno-agentforge-backend.onrender.com
+Backend Health  : https://yuno-agentforge-backend.onrender.com/health
+API Docs        : https://yuno-agentforge-backend.onrender.com/docs
+Telegram Bot    : @yuno_agentforge_user_bot (https://t.me/yuno_agentforge_user_bot)
+
+================================================================================
+1. WHAT THE PROJECT DOES (ONE-PARAGRAPH SUMMARY)
+================================================================================
+
+Yuno AgentForge is a full-stack multi-agent orchestration platform. Users can
+create AI agents, wire them into visual workflows (LangGraph), run conversations
+through a web Monitor UI or Telegram, and watch every agent step (tool calls,
+responses, token usage) stream live via WebSocket. The demo scenario is payment
+customer support: a user asks why an order failed, three agents collaborate
+(orchestrator → analyst with DB lookup → response writer), and the platform
+returns a human-friendly answer. A second workflow handles general support
+(payment methods, refunds, hours) without order lookup. Smart cross-workflow
+handoff automatically routes users to the correct team when they pick the wrong
+workflow or ask the wrong type of question.
+
+================================================================================
+2. TECH STACK
+================================================================================
+
+Backend         : FastAPI (async), Python 3.12.8 on Render
+Agent Runtime   : LangGraph 0.1.19 (state-machine graphs, node/edge model)
+LLM Providers   : OpenAI (gpt-4o-mini default) OR Anthropic (Claude Sonnet 4)
+                  Auto-detected from API keys; LLM_PROVIDER env to force one
+Database        : SQLite + SQLModel + aiosqlite (zero-setup, swappable to Postgres)
+Telegram        : python-telegram-bot v21 (polling locally, webhook in production)
+Frontend        : React 18 + Vite 5
+Workflow UI     : ReactFlow 11 (visual drag-and-drop builder)
+Styling         : TailwindCSS 3 (dark theme)
+HTTP Client     : Axios
+Icons           : Lucide React
+Deployment      : Render (free tier) — Blueprint via render.yaml
+Container       : Docker Compose optional (backend :8000, frontend :3000)
+
+================================================================================
+3. ARCHITECTURE (HIGH LEVEL)
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     Agent Studio (React Frontend)                            │
+│  Dashboard · Agents CRUD · Workflows · Builder · Monitor · Channels         │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │ REST API + WebSocket (/ws/logs)
+┌──────────────────────────────▼──────────────────────────────────────────────┐
+│                     FastAPI Backend (backend.main:app)                       │
+│  /api/agents  /api/workflows  /api/stats  /api/payments  /api/channels     │
+│  /ws/logs  /telegram/webhook/{bot_id}  /health                               │
+└──────────┬───────────────────────────────┬──────────────────────────────────┘
+           │ LangGraph executor            │ SQLite (SQLModel)
+┌──────────▼──────────┐         ┌──────────▼──────────────────────────────────┐
+│  Agent Runtime       │         │  Persistence                                 │
+│  graph.py            │         │  agents, workflows, messages, workflow_runs  │
+│  nodes.py            │         │  payments, playbook_entries, telegram_bots   │
+│  executor.py         │         │  channel_config                              │
+│  handoff.py          │         └──────────────────────────────────────────────┘
+│  tools.py            │
+└──────────┬──────────┘
+           │ LLM API calls
+┌──────────▼──────────┐         ┌──────────────────────────────────────────────┐
+│  OpenAI / Anthropic  │         │  Telegram Bot(s)                             │
+└─────────────────────┘         │  Webhook (prod) / Polling (local)            │
+                                └──────────────────────────────────────────────┘
+
+Key design decisions:
+- LangGraph chosen over CrewAI/AutoGen: explicit graphs map 1:1 to ReactFlow UI
+- FastAPI: async-native, WebSocket support, OpenAPI auto-docs
+- SQLite: single-command local run; DATABASE_URL swap for Postgres
+- Channel-agnostic executor: same workflow logic for Monitor, API, and Telegram
+- Shared log queue: all channels stream events to Monitor WebSocket panel
+
+================================================================================
+4. PRE-BUILT WORKFLOWS (2 REQUIRED TEMPLATES)
+================================================================================
+
+WORKFLOW 1 — Payment failure investigator (DEFAULT)
+---------------------------------------------------
+Name        : Payment failure investigator
+Agents (3)  : Orchestrator → Payment Analyst → Response Writer
+Purpose     : Investigate failed payment orders using SQLite knowledge base
+Tools used  : lookup_payment, get_retry_recommendation
+Graph       : orchestrator → analyst → responder (linear chain)
+
+WORKFLOW 2 — Customer support router
+------------------------------------
+Name        : Customer support router
+Agents (2)  : Support Router → General Support Agent
+Purpose     : General FAQ — payment methods, hours, refunds, regions
+Tools used  : list_supported_payment_methods, get_support_info
+Graph       : router → specialist (NO order lookup)
+
+Templates are defined in backend/api/workflows.py (get_templates) and seeded
+into the database on first startup via backend/main.py.
+
+================================================================================
+5. ALL AGENTS (SEEDED ON STARTUP)
+================================================================================
+
+PAYMENT WORKFLOW AGENTS
+-----------------------
+1. Orchestrator (role: orchestrator)
+   - Classifies user intent, writes internal handoff to analyst
+   - No tools
+   - Handles greetings, order IDs, general requests
+
+2. Payment Analyst (role: analyst)
+   - Calls lookup_payment when order ID present
+   - Calls get_retry_recommendation for failed payments
+   - Tools: lookup_payment, get_retry_recommendation
+
+3. Response Writer (role: responder)
+   - Customer-facing voice; writes 1-3 sentence friendly reply
+   - No tools; never mentions internal agents/tools
+
+SUPPORT WORKFLOW AGENTS
+-----------------------
+4. Support Router (role: orchestrator)
+   - Routes general support topics (methods, refunds, hours, regions)
+   - Detects when user needs payment investigation team
+
+5. General Support Agent (role: custom)
+   - Customer-facing general support
+   - Tools: list_supported_payment_methods, get_support_info
+
+Users can create additional custom agents via the Agents page (any role, tools,
+system prompt, model, max tokens, memory toggle).
+
+================================================================================
+6. TOOLS (LANGCHAIN TOOLS)
+================================================================================
+
+lookup_payment(order_id)
+  - Queries SQLite Payment table by order ID
+  - Forgiving ID parsing: "order 1001" → ORD-1001
+  - Returns: status, reason, amount, currency, gateway OR not_found
+
+get_retry_recommendation(failure_reason)
+  - Looks up PlaybookEntry table (DB-backed playbook)
+  - Falls back to built-in defaults if no custom entry
+  - Used after payment lookup for failed orders
+
+list_supported_payment_methods()
+  - Returns hardcoded list: Visa, Mastercard, Amex, PayPal, Stripe,
+    PIX, OXXO, Mercado Pago, PSE, Nequi
+
+get_support_info(topic)
+  - Topics: hours, refunds, contact, regions
+  - Hardcoded support policy text in backend/runtime/tools.py
+
+All tools registered in backend/runtime/tools.py → AVAILABLE_TOOLS dict.
+
+================================================================================
+7. KNOWLEDGE BASE & SAMPLE DATA
+================================================================================
+
+PAYMENT RECORDS (seeded — backend/main.py DEFAULT_PAYMENTS)
+------------------------------------------------------------
+Order ID    Status   Reason              Amount    Gateway   Customer
+ORD-1001    failed   insufficient_funds  1250 USD  Stripe    Alex Morgan
+ORD-1002    failed   card_expired        89.99 USD PayPal    Brianna Lee
+ORD-1003    failed   gateway_timeout     340.50 BRL Yuno     Carlos Diaz
+ORD-1004    failed   fraud_detected      5000 USD  Stripe    Dana White
+ORD-1005    success  (none)              42.00 USD Yuno      Esha Patel
+
+PLAYBOOK / RETRY RECOMMENDATIONS (seeded — backend/runtime/playbook.py)
+-----------------------------------------------------------------------
+insufficient_funds → "Please ensure your account has sufficient balance and retry."
+card_expired       → "Your card has expired. Please update your payment method and retry."
+gateway_timeout    → "This was a temporary network issue. Please retry your payment."
+fraud_detected     → "This transaction was flagged for security review. Please contact your bank."
+
+Custom payments + custom failure reasons can be added via:
+- Monitor → Knowledge base panel
+- Channels page knowledge base UI
+- POST /api/payments/ (with recommendation field for custom reasons)
+
+================================================================================
+8. SMART CROSS-WORKFLOW HANDOFF
+================================================================================
+
+File: backend/runtime/handoff.py + backend/runtime/executor.py
+
+When a user runs the WRONG workflow for their message, the platform auto-transfers:
+
+Support workflow + payment/order question  →  Payment failure investigator
+Payment workflow + general support question →  Customer support router
+
+Intent classification (regex-based):
+- payment_investigation: order IDs (ORD-1002), failure keywords
+- general_support: payment methods, refunds, hours, regions, wallets
+- greeting: hi, hello, thanks
+- ambiguous: no handoff
+
+Handoff behavior:
+- Telegram / default API: single blocking run, chains both workflows
+- Monitor UI (staged_handoff: true): phase 1 shows redirect message, pause,
+  phase 2 runs target workflow; workflow dropdown auto-updates
+- polish_handoff_message(): replaces internal router text with customer-facing redirect
+- Same session_id preserved across handoff (full conversation thread)
+
+API flags on POST /api/workflows/{id}/run:
+  staged_handoff: true   — Monitor two-phase handoff UX
+  skip_handoff: true     — Force run on selected workflow only
+
+================================================================================
+9. DATABASE MODELS (SQLModel)
+================================================================================
+
+Agent           — id, name, role, system_prompt, model, tools[], memory_enabled,
+                  max_tokens, created_at, updated_at
+
+Workflow        — id, name, description, graph_json {nodes[], edges[]}, is_active,
+                  created_at
+
+Message         — id, workflow_id, session_id, from_agent, to_agent, content,
+                  message_type (human_input|agent_response|tool_call|tool_result|
+                  inter_agent), tokens_used, cost_usd, created_at
+
+WorkflowRun     — id, workflow_id, session_id, status (running|completed|failed),
+                  started_at, completed_at, total_tokens, total_cost_usd
+
+Payment         — order_id (PK), status, reason, amount, currency, gateway, customer
+
+PlaybookEntry   — reason (PK), recommendation, is_builtin, updated_at
+
+TelegramBot     — id, bot_username, label, token, workflow_id, source (user|env),
+                  created_at
+
+ChannelConfig   — id, channel, workflow_id, enabled, updated_at
+
+Database file   : agentforge.db (SQLite, repo root or Render ephemeral disk)
+
+================================================================================
+10. REST API ENDPOINTS (COMPLETE LIST)
+================================================================================
+
+HEALTH
+  GET  /health                          → {"status":"ok","service":"yuno-agentforge"}
+
+AGENTS  (/api/agents)
+  GET  /api/agents/                     → List all agents
+  POST /api/agents/                     → Create agent
+  GET  /api/agents/{id}                 → Get agent
+  PUT  /api/agents/{id}                 → Update agent
+  DELETE /api/agents/{id}               → Delete agent
+  GET  /api/agents/tools/available      → List tool names
+
+STATS
+  GET  /api/stats                       → Dashboard stats + recent runs
+
+WORKFLOWS  (/api/workflows)
+  GET  /api/workflows/                  → List workflows
+  POST /api/workflows/                  → Create workflow
+  GET  /api/workflows/templates         → Pre-built templates (2)
+  PUT  /api/workflows/{id}              → Update workflow
+  DELETE /api/workflows/{id}            → Delete workflow
+  POST /api/workflows/{id}/run          → Run workflow (body: input_message,
+                                          session_id?, staged_handoff?, skip_handoff?)
+  GET  /api/workflows/sessions/list     → All chat sessions (Monitor sidebar)
+  GET  /api/workflows/{id}/messages     → Messages (query: session_id?)
+  DELETE /api/workflows/sessions/{id}  → Delete session across workflows
+  DELETE /api/workflows/{id}/sessions/{session_id}  → Legacy delete
+  DELETE /api/workflows/runs/{run_id}   → Remove run from dashboard history
+
+PAYMENTS / KNOWLEDGE BASE  (/api/payments)
+  GET  /api/payments/                   → Records + playbook + example questions
+  POST /api/payments/                   → Add custom payment + optional playbook entry
+  DELETE /api/payments/{order_id}       → Delete payment record
+
+CHANNELS  (/api/channels)
+  GET  /api/channels/                   → Telegram bots + web channel info
+  POST /api/channels/telegram           → Connect new Telegram bot
+  PUT  /api/channels/telegram/{bot_id}  → Change bot's workflow
+  DELETE /api/channels/telegram/{bot_id}→ Disconnect bot
+
+WEBSOCKET
+  WS   /ws/logs                         → Live agent event stream (JSON events)
+
+TELEGRAM
+  POST /telegram/webhook/{bot_id}       → Telegram webhook handler (production)
+
+================================================================================
+11. WEBSOCKET EVENT TYPES (Monitor Log Stream)
+================================================================================
+
+Events streamed to Monitor "Agent activity" panel:
+  agent_start    — Agent node began processing
+  tool_call      — Tool invoked (shows args JSON)
+  tool_result    — Tool returned result
+  agent_response — Agent reply (tokens + cost)
+  handoff        — Cross-workflow transfer notification
+  ping           — Keep-alive (ignored by UI)
+
+Frontend: frontend/src/components/LogStream.jsx
+Backend emitter: backend/runtime/nodes.py (log_queue)
+
+================================================================================
+12. FRONTEND PAGES & FEATURES
+================================================================================
+
+Route          Page              Key Features
+/              Dashboard         Stats cards, Quick demo button, Recent runs list,
+                                 delete run, open in Monitor
+/agents        Agents            List/create/edit/delete agents, AgentForm modal
+/workflows     Workflows         Saved workflow cards, open in Builder, delete
+/builder       Workflow Builder  ReactFlow canvas, drag agents, connect edges,
+                                 load templates, save workflow
+/monitor       Monitor           Chat panel, session sidebar, workflow selector,
+                                 Knowledge base picker, live log stream,
+                                 Focus monitor mode, staged handoff UX,
+                                 delete session
+/channels      Channels          Connect Telegram bots, assign workflow,
+                                 Knowledge base management
+
+Shared components:
+  Navbar, AgentCard, AgentForm, LogStream, MessageHistory, KnowledgeBase
+
+Frontend API client: frontend/src/api/client.js
+  - VITE_API_URL points to backend (required on Render build)
+  - Runtime fallback for yuno-agentforge-frontend.onrender.com hostname
+
+================================================================================
+13. MONITOR UI — SPECIAL FEATURES
+================================================================================
+
+- Session sidebar: all conversations across workflows
+- Two chat bubbles on handoff: sky (redirect) + final answer
+- Staged handoff: redirect message first, then target workflow runs
+- Focus monitor toggle: hide chat, expand agent activity (for Telegram testing)
+- Auto-update workflow dropdown after handoff
+- Delete session via DELETE /api/workflows/sessions/{session_id}
+- Default demo message: "Why did my payment fail for order ORD-1002?"
+- Knowledge base panel: pick sample questions to paste into chat
+
+================================================================================
+14. TELEGRAM INTEGRATION
+================================================================================
+
+Local (ENVIRONMENT=development):
+  - Bot uses long-polling (no public URL needed)
+  - Token from .env TELEGRAM_BOT_TOKEN
+
+Production (ENVIRONMENT=production):
+  - Webhook registered at TELEGRAM_WEBHOOK_URL
+  - URL = backend base only: https://yuno-agentforge-backend.onrender.com
+  - Code appends: /telegram/webhook/{bot_id}
+
+Multiple bots supported:
+  - Env bot seeded on startup (TELEGRAM_BOT_TOKEN)
+  - Additional bots via Channels page (stored in TelegramBot table)
+  - Each bot can be assigned a different workflow
+
+Bot file: backend/telegram/bot.py
+Executor shared with web: backend/runtime/executor.py
+
+================================================================================
+15. ENVIRONMENT VARIABLES
+================================================================================
+
+LOCAL (.env in repo root — DO NOT COMMIT)
+-----------------------------------------
+LLM_PROVIDER          openai or anthropic (optional, auto-detected)
+OPENAI_API_KEY        Required if using OpenAI
+OPENAI_MODEL          Default: gpt-4o-mini
+ANTHROPIC_API_KEY     Required if using Anthropic (optional if OpenAI set)
+ANTHROPIC_MODEL       Default: claude-sonnet-4-20250514
+DATABASE_URL          Default: sqlite+aiosqlite:///./agentforge.db
+TELEGRAM_BOT_TOKEN    Optional; for Telegram channel
+TELEGRAM_WEBHOOK_URL  Production only; backend HTTPS URL (no trailing slash)
+ENVIRONMENT           development (polling) or production (webhook)
+
+RENDER BACKEND (yuno-agentforge-backend)
+----------------------------------------
+PYTHON_VERSION        3.12.8
+ENVIRONMENT           production
+DATABASE_URL          sqlite+aiosqlite:///./agentforge.db
+LLM_PROVIDER          openai
+OPENAI_API_KEY        (secret)
+ANTHROPIC_API_KEY     (optional, leave empty if OpenAI only)
+TELEGRAM_BOT_TOKEN    (secret)
+TELEGRAM_WEBHOOK_URL  https://yuno-agentforge-backend.onrender.com
+
+RENDER FRONTEND (yuno-agentforge-frontend)
+------------------------------------------
+VITE_API_URL          https://yuno-agentforge-backend.onrender.com
+                      (MUST be set before build — baked into Vite bundle)
+                      Value = URL ONLY, no "VITE_API_URL=" prefix, no trailing slash
+
+================================================================================
+16. LOCAL DEVELOPMENT SETUP
+================================================================================
+
+Prerequisites:
+  - Python 3.11+ (3.12 recommended)
+  - Node.js 20+
+  - OpenAI OR Anthropic API key
+  - Optional: Telegram bot token from @BotFather
+
+Steps:
+  1. git clone https://github.com/zaheerbrakchan/yuno-agentforge.git
+  2. cd yuno-agentforge
+  3. cp backend/.env.example .env  (or create .env from section 15)
+  4. Edit .env with your API keys
+
+Run backend (from repo root):
+  pip install -r backend/requirements.txt
+  python -m uvicorn backend.main:app --reload --port 8000
+
+Run frontend (separate terminal):
+  cd frontend && npm install && npm run dev
+  → http://localhost:5173
+
+Docker alternative:
+  docker compose up --build
+  → Frontend http://localhost:3000, Backend http://localhost:8000
+
+Run tests:
+  python -m pytest backend/tests -v
+
+IMPORTANT: Backend must run as `backend.main:app` from repo root (not from
+backend/ folder) to avoid python-telegram-bot import shadowing by backend/telegram/
+
+================================================================================
+17. RENDER DEPLOYMENT
+================================================================================
+
+Blueprint file: render.yaml
+
+Services:
+  1. yuno-agentforge-backend  (Free Web Service, Python 3.12.8)
+     buildCommand: pip install -r backend/requirements.txt
+     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+
+  2. yuno-agentforge-frontend (Free Static Site)
+     rootDir: frontend
+     buildCommand: npm install && npm run build
+     staticPublishPath: dist
+     SPA rewrite: /* → /index.html
+
+Known Render free-tier limitations:
+  - Backend sleeps after ~15 min inactivity (cold start ~30-60s)
+  - SQLite is ephemeral on redeploy (seeds re-run on startup)
+  - Frontend must rebuild when VITE_API_URL changes
+
+Deploy steps:
+  1. Connect GitHub repo to Render Blueprint
+  2. Set secret env vars (OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, etc.)
+  3. Set VITE_API_URL on frontend = backend URL
+  4. Deploy both services
+  5. Verify /health and frontend pages
+
+================================================================================
+18. DEMO SCRIPTS (FOR INTERVIEW / LIVE DEMO)
+================================================================================
+
+WEB MONITOR DEMO
+----------------
+1. Open https://yuno-agentforge-frontend.onrender.com/monitor
+2. Select "Payment failure investigator" workflow
+3. Send: "Why did my payment fail for order ORD-1002?"
+   → Orchestrator routes → Analyst calls lookup_payment + get_retry_recommendation
+   → Response Writer explains card expired + update payment method
+4. Follow-up: "How do I fix it?" (no new tool calls — uses conversation memory)
+5. Send: "What payment methods do you accept?"
+   → Smart handoff to Customer support router
+   → General Support Agent lists methods via tool
+
+DASHBOARD QUICK DEMO
+--------------------
+1. Dashboard → "Run demo" button
+2. Sends ORD-1002 question automatically
+3. Shows tokens, cost, link to open in Monitor
+
+TELEGRAM DEMO
+-------------
+1. Message @yuno_agentforge_user_bot
+2. "Hi" → greeting
+3. "My payment failed for ORD-1002" → payment investigation
+4. "What payment methods do you support?" → handoff to support workflow
+5. Watch same session in Monitor (Focus monitor mode while testing Telegram)
+
+WORKFLOW BUILDER DEMO
+---------------------
+1. Builder → Load template → Payment failure investigator
+2. Show 3-agent graph on ReactFlow canvas
+3. Save as custom workflow name
+4. Run from Monitor with saved workflow
+
+KNOWLEDGE BASE DEMO
+-------------------
+1. Monitor → Knowledge base → view ORD-1001 through ORD-1005
+2. Add custom order ORD-9999 with custom failure reason + recommendation
+3. Ask agent about ORD-9999 in chat
+
+================================================================================
+19. TESTS
+================================================================================
+
+File: backend/tests/test_critical_paths.py
+
+Tests (7):
+  test_health_check                    — GET /health returns ok
+  test_create_agent                    — POST /api/agents/
+  test_list_agents                     — GET /api/agents/
+  test_create_workflow                 — POST /api/workflows/
+  test_get_workflow_templates          — ≥2 templates returned
+  test_get_available_tools             — lookup_payment, get_retry_recommendation,
+                                         get_support_info present
+  test_custom_payment_saves_playbook   — Custom payment + playbook entry
+  test_handoff_intent_classification   — Intent regex unit tests
+
+Run: python -m pytest backend/tests -v
+
+================================================================================
+20. PROJECT FILE STRUCTURE
+================================================================================
+
+yuno-agentforge/
+├── backend/
+│   ├── main.py                 FastAPI app, seeding, lifespan, Telegram webhook
+│   ├── requirements.txt        Python dependencies
+│   ├── api/
+│   │   ├── agents.py           Agent CRUD + /api/stats
+│   │   ├── workflows.py        Workflow CRUD, run, templates, sessions
+│   │   ├── payments.py         Knowledge base / payment records API
+│   │   ├── channels.py         Telegram bot connect/disconnect
+│   │   └── ws.py               WebSocket log stream
+│   ├── runtime/
+│   │   ├── graph.py            LangGraph workflow builders
+│   │   ├── nodes.py            Agent node functions + log emitter
+│   │   ├── executor.py         Shared workflow execution + handoff
+│   │   ├── handoff.py          Cross-workflow intent + routing
+│   │   ├── tools.py            LangChain tool definitions
+│   │   └── playbook.py         Retry recommendation defaults
+│   ├── telegram/
+│   │   └── bot.py              Telegram bot manager (polling/webhook)
+│   ├── db/
+│   │   ├── models.py           SQLModel table definitions
+│   │   └── database.py         Async engine + session factory
+│   └── tests/
+│       └── test_critical_paths.py
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx             Router + layout
+│   │   ├── main.jsx            React entry
+│   │   ├── index.css           Tailwind + dark theme
+│   │   ├── api/client.js       Axios API client + VITE_API_URL resolution
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Agents.jsx
+│   │   │   ├── Workflows.jsx
+│   │   │   ├── WorkflowBuilder.jsx
+│   │   │   ├── Monitor.jsx
+│   │   │   └── Channels.jsx
+│   │   └── components/
+│   │       ├── Navbar.jsx
+│   │       ├── AgentCard.jsx
+│   │       ├── AgentForm.jsx
+│   │       ├── LogStream.jsx
+│   │       ├── MessageHistory.jsx
+│   │       └── KnowledgeBase.jsx
+│   ├── package.json
+│   └── vite.config.js
+├── render.yaml                 Render Blueprint (backend + frontend)
+├── docker-compose.yml          Optional Docker setup
+├── .python-version             3.12.8 (Render Python pin)
+├── README.md                   Public documentation
+└── PROJECT_DETAILS.txt         This file
+
+================================================================================
+21. HIRING FORM SUBMISSION DETAILS
+================================================================================
+
+Full Name       : Zaheer Abass
+Email           : xaheer3scc@gmail.com
+GitHub          : https://github.com/zaheerbrakchan/yuno-agentforge
+Hosted Link     : https://yuno-agentforge-frontend.onrender.com
+Current CTC     : 34 LPA
+Expected CTC    : 60 LPA
+Notice Period   : (fill your actual notice period)
+
+Documentation   : Optional — README + this PROJECT_DETAILS.txt cover architecture,
+                  setup, demo, and design decisions
+
+================================================================================
+22. EVALUATION CRITERIA MAPPING (CHALLENGE RUBRIC)
+================================================================================
+
+Working end-to-end demo (40%)
+  ✓ 3-agent payment workflow via web Monitor + Telegram
+  ✓ Live WebSocket streaming of agent steps
+  ✓ Real tool calls against SQLite knowledge base
+  ✓ Two pre-built workflow templates
+  ✓ Smart cross-workflow handoff
+
+Architecture & code quality (30%)
+  ✓ LangGraph state machine with dynamic graph from saved JSON
+  ✓ Clean layer separation: api / runtime / db / telegram
+  ✓ Async throughout (FastAPI + aiosqlite)
+  ✓ Shared executor for all channels
+  ✓ 7 pytest critical-path tests
+
+UI/UX & configurability (20%)
+  ✓ ReactFlow visual workflow builder
+  ✓ Agent CRUD with tools/model/prompt config
+  ✓ Monitor with sessions, handoff UX, focus mode
+  ✓ Knowledge base UI for custom payment data
+  ✓ Channels page for Telegram bot management
+
+Documentation (10%)
+  ✓ README with architecture, setup, design decisions
+  ✓ PROJECT_DETAILS.txt (this comprehensive reference)
+  ✓ Inline code comments on non-obvious logic
+
+================================================================================
+23. KNOWN LIMITATIONS & NOTES
+================================================================================
+
+- Render free tier: backend cold starts after sleep; first request may be slow
+- SQLite on Render is not persistent across redeploys (data re-seeds on startup)
+- README mentions ORD-10234 in one place; app uses ORD-1001 through ORD-1005
+- Custom "Fraud Investigation Flow" may appear in UI if created during testing;
+  demo should use the two seeded templates above
+- LLM costs are tracked per message but depend on provider pricing
+- WebSocket on Render free tier may disconnect; LogStream has reconnect button
+- Do NOT commit .env file (contains API keys and Telegram token)
+
+================================================================================
+24. RECENT FIXES (DEPLOYMENT HISTORY)
+================================================================================
+
+- Pinned Python 3.12.8 on Render (fix pydantic-core build on Python 3.14)
+- Added plan: free to render.yaml backend service
+- Fixed VITE_API_URL missing/malformed causing black pages on Agents/Monitor
+- Fixed Agents.jsx crash (undefined error state variable)
+- Smart cross-workflow handoff with staged Monitor UX
+- Dual workflows: Payment failure investigator + Customer support router
+- PlaybookEntry model for custom retry recommendations
+- Session delete across workflows after handoff
+- Monitor focus mode, handoff chat bubbles, dashboard recent runs
+
+================================================================================
+25. QUICK REFERENCE — SAMPLE ORDER IDs FOR TESTING
+================================================================================
+
+ORD-1001  → failed, insufficient_funds, $1250 Stripe
+ORD-1002  → failed, card_expired, $89.99 PayPal        ← PRIMARY DEMO ORDER
+ORD-1003  → failed, gateway_timeout, R$340.50 Yuno
+ORD-1004  → failed, fraud_detected, $5000 Stripe
+ORD-1005  → success, $42.00 Yuno
+
+Sample questions:
+  "Why did my payment fail for order ORD-1002?"
+  "Was order ORD-1005 successful?"
+  "What payment methods do you accept?"
+  "What are your refund policies?"
+  "Hi, I need help with a payment"
+
+================================================================================
+                              END OF DOCUMENT
+================================================================================
