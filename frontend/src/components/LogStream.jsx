@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { resolveApiBaseUrl } from '../api/client.js'
 import { Play, Square, Bot, Wrench, CheckCircle2, MessageSquare, ArrowRightLeft } from 'lucide-react'
 
