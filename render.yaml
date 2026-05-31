@@ -1,6 +1,7 @@
 services:
   - type: web
     name: yuno-agentforge-backend
+    plan: free
     env: python
     # Run as the `backend` package from the repo root. This is required so the
     # nested `backend/telegram` module does not shadow the python-telegram-bot
