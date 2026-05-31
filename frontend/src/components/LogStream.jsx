@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { resolveApiBaseUrl } from '../api/client.js'
 import { Play, Square, Bot, Wrench, CheckCircle2, MessageSquare, ArrowRightLeft } from 'lucide-react'
 
 const pill = {
@@ -70,7 +70,7 @@ export default function LogStream() {
     if (wsRef.current) return
     // In production VITE_API_URL points at the backend; locally it's empty and
     // we connect through the Vite dev proxy on the current host.
-    const apiUrl = import.meta.env.VITE_API_URL || ''
+    const apiUrl = resolveApiBaseUrl()
     let wsBase
     if (apiUrl) {
       wsBase = apiUrl.replace(/^http/, 'ws')

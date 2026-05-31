@@ -1,6 +1,22 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || ''
+function resolveApiBaseUrl() {
+  let url = (import.meta.env.VITE_API_URL || '').trim()
+  // Guard against copy-paste mistakes like "VITE_API_URL=https://..."
+  if (url.includes('=')) {
+    url = url.split('=').pop().trim()
+  }
+  url = url.replace(/^["']|["']$/g, '').replace(/\/$/, '')
+  if (url) return url
+  if (window.location.hostname.includes('yuno-agentforge-frontend')) {
+    return 'https://yuno-agentforge-backend.onrender.com'
+  }
+  return ''
+}
+
+const BASE_URL = resolveApiBaseUrl()
+
+export { resolveApiBaseUrl }
 
 const api = axios.create({ baseURL: `${BASE_URL}/api` })
 
