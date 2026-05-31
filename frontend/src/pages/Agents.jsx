@@ -9,12 +9,17 @@ export default function Agents() {
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [error, setError] = useState('')
 
   const load = async () => {
     setLoading(true)
+    setError('')
     try {
       const res = await agentsApi.list()
-      setAgents(res.data)
+      setAgents(asArray(res.data))
+    } catch (e) {
+      setAgents([])
+      setError(e?.message || 'Could not load agents. Check VITE_API_URL on the frontend service.')
     } finally {
       setLoading(false)
     }
