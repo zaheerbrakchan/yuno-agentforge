@@ -4,6 +4,10 @@
 
 Built as part of the Yuno AI Engineer hiring challenge.
 
+## Demo
+
+🎥 **[Watch the full demo (YouTube)](https://www.youtube.com/watch?v=Zfq0U491H-Y)**
+
 🔗 **Live demo**: [https://yuno-agentforge-frontend.onrender.com](https://yuno-agentforge-frontend.onrender.com)  
 🔗 **Backend API**: [https://yuno-agentforge-backend.onrender.com/docs](https://yuno-agentforge-backend.onrender.com/docs)  
 🤖 **Telegram bot**: [@yuno_agentforge_user_bot](https://t.me/yuno_agentforge_user_bot)
